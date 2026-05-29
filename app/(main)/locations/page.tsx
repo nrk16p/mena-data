@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
+import * as XLSX from "xlsx"
 import {
   RefreshCw,
   Search,
@@ -18,6 +19,7 @@ import {
   X,
   PlusCircle,
   Navigation,
+  Download,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -92,6 +94,70 @@ function distColor(m: number, threshold: number) {
   if (ratio <= 0.25) return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
   if (ratio <= 0.5)  return "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
   return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
+}
+
+// ─── Export helpers ───────────────────────────────────────────────────────────
+
+function exportDuplicatesToExcel(result: DupResult) {
+  const ts = new Date().toLocaleString("th-TH")
+
+  // Summary sheet
+  const summaryData = [
+    ["Duplicate Location Report"],
+    ["Generated", ts],
+    ["Threshold", `${result.threshold} meters`],
+    ["Locations checked (with coordinates)", result.checkedCount],
+    ["Duplicate groups found", result.groupCount],
+    ["Locations affected", result.affected],
+  ]
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryData)
+  wsSummary["!cols"] = [{ wch: 38 }, { wch: 22 }]
+
+  // Detail sheet — flat rows, one row per location
+  const headers = [
+    "Group",
+    "No. in Group",
+    "รหัส",
+    "ชื่อสถานที่",
+    "จังหวัด",
+    "อำเภอ",
+    "Lat",
+    "Lng",
+    "ระยะห่างใกล้สุด (m)",
+    "Max Distance ในกลุ่ม (m)",
+  ]
+  const rows: (string | number)[][] = [headers]
+
+  result.groups.forEach((group, gi) => {
+    group.locations.forEach((loc, li) => {
+      rows.push([
+        gi + 1,
+        li + 1,
+        String(loc.รหัส ?? ""),
+        String(loc.ชื่อ ?? ""),
+        String(loc.จังหวัด ?? ""),
+        String(loc.อำเภอ ?? ""),
+        loc.lat,
+        loc.lng,
+        li === 0 ? "reference" : loc.minDist,
+        group.maxDist,
+      ])
+    })
+  })
+
+  const wsDetail = XLSX.utils.aoa_to_sheet(rows)
+  wsDetail["!cols"] = [
+    { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 48 },
+    { wch: 16 }, { wch: 20 }, { wch: 12 }, { wch: 12 },
+    { wch: 22 }, { wch: 24 },
+  ]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, wsSummary, "Summary")
+  XLSX.utils.book_append_sheet(wb, wsDetail, "Duplicate Groups")
+
+  const date = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+  XLSX.writeFile(wb, `duplicate_locations_${date}_${result.threshold}m.xlsx`)
 }
 
 // ─── Duplicate panel ──────────────────────────────────────────────────────────
@@ -349,6 +415,13 @@ function DuplicatePanel({ data }: { data: LocationDoc[] }) {
                           <span className="text-[12px] text-gray-400">{result.affected} locations affected</span>
                           <span className="text-[12px] text-gray-400">·</span>
                           <span className="text-[12px] text-gray-400">{result.checkedCount.toLocaleString()} checked · threshold {result.threshold}m</span>
+                          <button
+                            onClick={() => exportDuplicatesToExcel(result)}
+                            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[12px] font-semibold transition"
+                          >
+                            <Download size={13} />
+                            Export Excel
+                          </button>
                         </>
                       )}
                     </div>
