@@ -18,3 +18,11 @@ dist/
 .DS_Store
 *.pem
 npm-debug.log*
+
+# pipeline generated files
+scripts/*/data/
+scripts/cpac/cpac_token.json
+scripts/cpac/raw_data/
+scripts/*/app.log
+scripts/*/automation_log.log
+scripts/*/task_log.txt

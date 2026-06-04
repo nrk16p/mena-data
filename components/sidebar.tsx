@@ -13,6 +13,7 @@ import {
   ChevronRight,
   LogOut,
   Route,
+  FileOutput,
 } from "lucide-react"
 import { ThemeToggle } from "./theme-toggle"
 
@@ -43,6 +44,14 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/trucks", label: "Truck Master", icon: Truck, soon: true },
       { href: "/drivers", label: "Driver Master", icon: Users, soon: true },
       { href: "/routes", label: "Route Master", icon: Route, soon: true },
+    ],
+  },
+  {
+    label: "LD Pipelines",
+    items: [
+      { href: "/ld", label: "Asia LD", icon: FileOutput },
+      { href: "/cpac", label: "CPAC", icon: FileOutput },
+      { href: "/scco", label: "SCCO", icon: FileOutput },
     ],
   },
 ]
