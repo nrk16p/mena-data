@@ -13,6 +13,12 @@ export function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Allow server-to-server API access with a shared key
+  const apiKey = request.headers.get("x-api-key")
+  if (apiKey && process.env.PIPELINE_API_KEY && apiKey === process.env.PIPELINE_API_KEY) {
+    return NextResponse.next()
+  }
+
   const sessionToken =
     request.cookies.get("next-auth.session-token")?.value ??
     request.cookies.get("__Secure-next-auth.session-token")?.value

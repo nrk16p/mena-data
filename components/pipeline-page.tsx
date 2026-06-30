@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { Download, FileSpreadsheet, ChevronDown, ChevronUp, RefreshCw, Database } from "lucide-react"
+import { useEffect, useState, useMemo } from "react"
+import { Download, FileSpreadsheet, ChevronDown, ChevronUp, RefreshCw, Database, Search, X } from "lucide-react"
 
 type RunInfo = {
   id: string
@@ -30,40 +30,77 @@ function formatDate(iso: string) {
   return new Date(iso).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })
 }
 
-function DataTable({ data }: { data: TableData }) {
+function DataTable({ data, search }: { data: TableData; search: string }) {
+  const filtered = useMemo(() => {
+    if (!search.trim()) return data.rows
+    const q = search.trim().toLowerCase()
+    return data.rows.filter((row) =>
+      data.headers.some((h) => String(row[h] ?? "").toLowerCase().includes(q))
+    )
+  }, [data, search])
+
   if (data.rows.length === 0) {
     return <p className="py-6 text-center text-xs text-gray-400">No data</p>
   }
+
   return (
     <div>
       <p className="mb-2 text-xs text-gray-400">
-        Showing {data.rows.length} of {data.total} rows
+        {search.trim()
+          ? `${filtered.length} match${filtered.length !== 1 ? "es" : ""} — from first ${data.rows.length} of ${data.total} rows`
+          : `Showing ${data.rows.length} of ${data.total} rows`}
       </p>
       <div className="overflow-auto max-h-80 rounded-xl border border-gray-200 dark:border-white/8">
-        <table className="min-w-full text-xs">
-          <thead className="sticky top-0 bg-gray-100 dark:bg-white/8">
-            <tr>
-              {data.headers.map((h) => (
-                <th key={h} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-gray-600 dark:text-gray-300">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="bg-white dark:bg-transparent divide-y divide-gray-50 dark:divide-white/5">
-            {data.rows.map((row, i) => (
-              <tr key={i} className="hover:bg-gray-50 dark:hover:bg-white/3">
+        {filtered.length === 0 ? (
+          <p className="py-8 text-center text-xs text-gray-400">No rows match &ldquo;{search}&rdquo;</p>
+        ) : (
+          <table className="min-w-full text-xs">
+            <thead className="sticky top-0 bg-gray-100 dark:bg-white/8">
+              <tr>
                 {data.headers.map((h) => (
-                  <td key={h} className="whitespace-nowrap px-3 py-1.5 text-gray-700 dark:text-gray-300">
-                    {String(row[h] ?? "")}
-                  </td>
+                  <th key={h} className="whitespace-nowrap px-3 py-2 text-left font-semibold text-gray-600 dark:text-gray-300">
+                    {h}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="bg-white dark:bg-transparent divide-y divide-gray-50 dark:divide-white/5">
+              {filtered.map((row, i) => (
+                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-white/3">
+                  {data.headers.map((h) => {
+                    const cell = String(row[h] ?? "")
+                    const isMatch = search.trim() && cell.toLowerCase().includes(search.trim().toLowerCase())
+                    return (
+                      <td key={h} className="whitespace-nowrap px-3 py-1.5 text-gray-700 dark:text-gray-300">
+                        {isMatch ? (
+                          <Highlight text={cell} query={search.trim()} />
+                        ) : (
+                          cell
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
+  )
+}
+
+function Highlight({ text, query }: { text: string; query: string }) {
+  const idx = text.toLowerCase().indexOf(query.toLowerCase())
+  if (idx === -1) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 dark:bg-yellow-500/40 text-inherit rounded px-0.5">
+        {text.slice(idx, idx + query.length)}
+      </mark>
+      {text.slice(idx + query.length)}
+    </>
   )
 }
 
@@ -75,6 +112,7 @@ export default function PipelinePage({ type, title }: { type: string; title: str
   const [preview, setPreview] = useState<PreviewData | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<TabKey>("ticket")
+  const [search, setSearch] = useState("")
 
   async function fetchRuns() {
     try {
@@ -95,11 +133,13 @@ export default function PipelinePage({ type, title }: { type: string; title: str
     if (openId === run.id) {
       setOpenId(null)
       setPreview(null)
+      setSearch("")
       return
     }
     setOpenId(run.id)
     setPreview(null)
     setActiveTab("ticket")
+    setSearch("")
     setPreviewLoading(true)
     try {
       const res = await fetch(`/api/pipeline/${type}/${encodeURIComponent(run.id)}`)
@@ -117,6 +157,12 @@ export default function PipelinePage({ type, title }: { type: string; title: str
   }
 
   useEffect(() => { fetchRuns() }, [type])
+
+  // Reset search when switching tabs
+  function handleTabChange(tab: TabKey) {
+    setActiveTab(tab)
+    setSearch("")
+  }
 
   const tabs: { key: TabKey; label: string; count: (r: RunInfo) => number | null }[] = [
     { key: "ticket", label: "Ticket", count: (r) => r.ldt_count },
@@ -202,7 +248,7 @@ export default function PipelinePage({ type, title }: { type: string; title: str
               </div>
             </div>
 
-            {/* Expandable preview with tabs */}
+            {/* Expandable preview with tabs + search */}
             {openId === run.id && (
               <div className="border-t border-gray-100 dark:border-white/8 bg-gray-50 dark:bg-black/20">
                 {previewLoading && (
@@ -213,40 +259,63 @@ export default function PipelinePage({ type, title }: { type: string; title: str
                 )}
                 {!previewLoading && preview && (
                   <div>
-                    {/* Tab bar */}
-                    <div className="flex items-center gap-0 border-b border-gray-200 dark:border-white/8 px-5">
-                      {tabs.map((tab) => {
-                        const count = tab.count(run)
-                        const isActive = activeTab === tab.key
-                        return (
-                          <button
-                            key={tab.key}
-                            onClick={() => setActiveTab(tab.key)}
-                            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                              isActive
-                                ? "border-gray-900 dark:border-white text-gray-900 dark:text-white"
-                                : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                            }`}
-                          >
-                            {tab.label}
-                            {count != null && (
-                              <span className={`rounded-full px-1.5 py-0.5 text-xs ${
+                    {/* Tab bar + search bar */}
+                    <div className="flex items-center justify-between border-b border-gray-200 dark:border-white/8 px-5">
+                      {/* Tabs */}
+                      <div className="flex items-center gap-0">
+                        {tabs.map((tab) => {
+                          const count = tab.count(run)
+                          const isActive = activeTab === tab.key
+                          return (
+                            <button
+                              key={tab.key}
+                              onClick={() => handleTabChange(tab.key)}
+                              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                                 isActive
-                                  ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900"
-                                  : "bg-gray-200 dark:bg-white/10 text-gray-600 dark:text-gray-400"
-                              }`}>
-                                {count.toLocaleString()}
-                              </span>
-                            )}
+                                  ? "border-gray-900 dark:border-white text-gray-900 dark:text-white"
+                                  : "border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                              }`}
+                            >
+                              {tab.label}
+                              {count != null && (
+                                <span className={`rounded-full px-1.5 py-0.5 text-xs ${
+                                  isActive
+                                    ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900"
+                                    : "bg-gray-200 dark:bg-white/10 text-gray-600 dark:text-gray-400"
+                                }`}>
+                                  {count.toLocaleString()}
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Search input */}
+                      <div className="relative flex items-center py-2">
+                        <Search size={13} className="absolute left-2.5 text-gray-400 pointer-events-none" />
+                        <input
+                          type="text"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          placeholder="Search rows…"
+                          className="w-52 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 pl-8 pr-7 py-1.5 text-xs text-gray-700 dark:text-gray-300 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition"
+                        />
+                        {search && (
+                          <button
+                            onClick={() => setSearch("")}
+                            className="absolute right-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                          >
+                            <X size={12} />
                           </button>
-                        )
-                      })}
+                        )}
+                      </div>
                     </div>
 
                     {/* Tab content */}
                     <div className="px-5 py-4">
-                      {activeTab === "ticket" && <DataTable data={preview.ldt} />}
-                      {activeTab === "shipto" && <DataTable data={preview.shipto} />}
+                      {activeTab === "ticket" && <DataTable data={preview.ldt} search={search} />}
+                      {activeTab === "shipto" && <DataTable data={preview.shipto} search={search} />}
                     </div>
                   </div>
                 )}
