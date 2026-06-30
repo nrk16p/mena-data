@@ -9,7 +9,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-TASKS = ["task_1.py", "task_2.py", "task_3.py", "task_4.py", "task_5.py", "task_6.py"]
+TASKS = ["task_1.py", "task_2.py", "task_3.py", "task_4.py", "task_5.py", "task_6.py", "task_mongo.py"]
 
 project_root = Path(__file__).parent
 
@@ -20,6 +20,7 @@ def run_task(script_name: str):
     task_path = project_root / script_name
     if not task_path.exists():
         logging.warning(f"{script_name} not found, skipping.")
+        print(f"{script_name} not found, skipping.")
         return
     try:
         result = subprocess.run(

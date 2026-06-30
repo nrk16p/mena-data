@@ -1,7 +1,11 @@
 import pymysql
 import pandas as pd
 import logging
+import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     filename="app.log",
@@ -15,11 +19,11 @@ BASE_DIR = Path(__file__).parent
 def get_db_connection():
     try:
         conn = pymysql.connect(
-            host="157.230.39.131",
-            user="plug",
-            password="Mena!001",
-            database="mn-terminus-api",
-            port=3306,
+            host=os.getenv("DB_HOST", "157.230.39.131"),
+            user=os.getenv("DB_USER", "plug"),
+            password=os.getenv("DB_PASSWORD", ""),
+            database=os.getenv("DB_NAME", "mn-terminus-api"),
+            port=int(os.getenv("DB_PORT", "3306")),
             cursorclass=pymysql.cursors.DictCursor,
         )
         logging.info("Database connection established successfully.")
@@ -120,7 +124,7 @@ date_cols = [
 def format_datetime_keep_time(val):
     if pd.isna(val):
         return val
-    dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
+    dt = pd.to_datetime(val, errors="coerce")
     if pd.isna(dt):
         return val
     if dt.time() == pd.Timestamp.min.time():
@@ -132,9 +136,10 @@ if __name__ == "__main__":
     logging.info("task_1 started.")
     raw_data = fetch_data()
     processed_data = process_data(raw_data)
-    for col in date_cols:
-        if col in processed_data.columns:
-            processed_data[col] = processed_data[col].apply(format_datetime_keep_time)
+    if not processed_data.empty:
+        for col in date_cols:
+            if col in processed_data.columns:
+                processed_data[col] = processed_data[col].apply(format_datetime_keep_time)
     save_to_excel(processed_data)
     logging.info("task_1 completed.")
     print(processed_data.head())

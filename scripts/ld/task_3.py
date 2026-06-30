@@ -16,6 +16,11 @@ def preprocess_driver_data(df_driver):
     return df_driver[["ทะเบียน", "สถานะ", "รหัส.1", "ชื่อ.1"]]
 
 
+def _fmt_date(dt_series, include_time=False):
+    fmt = "%d/%m/%Y %H:%M" if include_time else "%d/%m/%Y"
+    return pd.to_datetime(dt_series, errors="coerce").dt.strftime(fmt)
+
+
 def merge_data(df_ldf, df_driver, df_zone):
     df_ldf = df_ldf.merge(df_driver, left_on="ทะเบียนหัว", right_on="ทะเบียน", how="left")
     df_ldf = df_ldf.rename(columns={"รหัส.1": "รหัส พจส 1"})
@@ -25,13 +30,13 @@ def merge_data(df_ldf, df_driver, df_zone):
         **{col: "" for col in ["Base Plant", "เลขที่ตั๋วเพิ่ม 2", "เลขที่ตั๋วเพิ่ม 3", "เลขที่ตั๋วเพิ่ม 4", "หมายเหตุ", "วิ่งแทนรถทะเบียน"]},
     )
     df_ldf["ทะเบียนหัว"] = "สบ." + df_ldf["ทะเบียนหัว"]
-    df_ldf["วันที่"] = pd.to_datetime(df_ldf["วันที่"], errors="coerce").dt.strftime("%-d/%-m/%Y")
+    df_ldf["วันที่"] = _fmt_date(df_ldf["วันที่"])
     df_ldf["วันที่ครบกำหนด"] = df_ldf["วันที่"]
 
     date_cols = ["วันเวลาอ้างอิง 1", "วันเวลาอ้างอิง 2", "วันเวลาอ้างอิง 3",
                  "วันเวลาอ้างอิง 4", "วันเวลาลงสินค้า", "วันเวลาปิด LDT", "เวลาออกเดินทาง"]
     for col in date_cols:
-        df_ldf[col] = pd.to_datetime(df_ldf[col], errors="coerce").dt.strftime("%-d/%-m/%Y %H:%M")
+        df_ldf[col] = _fmt_date(df_ldf[col], include_time=True)
 
     df_ldf = df_ldf.merge(df_zone, left_on="แพล้นท์", right_on="Plant", how="left")
     df_ldf = df_ldf.drop(columns=["Plant", "รายละเอียด"], errors="ignore")

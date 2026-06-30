@@ -9,7 +9,7 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
-TASKS = ["task_1.py", "task_2.py", "task_3.py", "task_4.py", "task_5.py", "task_6.py", "task_7.py"]
+TASKS = ["task_1.py", "task_2.py", "task_3.py", "task_4.py", "task_5.py", "task_6.py", "task_7.py", "task_mongo.py"]
 
 project_root = Path(__file__).parent
 

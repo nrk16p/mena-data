@@ -1,46 +1,61 @@
 import os
-from pathlib import Path
-os.chdir(Path(__file__).parent)
-
-import requests
 import io
-import pandas as pd
 import warnings
 import urllib3
-import sys
-sys.stdout.reconfigure(encoding="utf-8")
+import requests
+import pandas as pd
+from pathlib import Path
+from dotenv import load_dotenv
 
-PHPSESSID = "nn0jiufk4njcd956rovb0isk8u"
-url = "https://www.mena-atms.com/report/excel/index.excel/type/ship.to"
-headers = {
-    "Referer": url,
-    "Content-Type": "application/x-www-form-urlencoded",
-    "Cookie": f"PHPSESSID={PHPSESSID}",
-}
+load_dotenv()
 
-from datetime import datetime, timedelta
-yesterday = (datetime.today() - timedelta(days=1)).strftime("%d/%m/%Y")
+os.chdir(Path(__file__).parent)
 
 warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
 
-all_results = []
-with requests.Session() as s:
-    for customer_id in ["139"]:
-        payload = {
-            "customer_id": customer_id,
-            "status": "A",
-            "from_valid_date": "01/01/2025",
-            "submit": "พิมพ์",
-            "display_type": "multiple-day",
-            "report_type": "ship.to",
-        }
-        r = s.post(url, data=payload, headers=headers, verify=False, timeout=60000)
-        r.raise_for_status()
-        with io.BytesIO(r.content) as f:
-            df = pd.read_excel(f, sheet_name=0, dtype=str, skiprows=1)
-            df["customer_id"] = customer_id
-            all_results.append(df)
+BASE_DIR = Path(__file__).parent
+BASE_URL = "https://www.mena-atms.com"
+USERNAME = os.getenv("ATMS_USERNAME", "")
+PASSWORD = os.getenv("ATMS_PASSWORD", "")
+CUSTOMER_IDS = ["139"]
 
-shipto = pd.concat(all_results, ignore_index=True)
-os.makedirs("raw_data", exist_ok=True)
-shipto.to_excel("raw_data/shipto.xlsx", index=False)
+
+def login(session: requests.Session) -> None:
+    r = session.post(
+        f"{BASE_URL}/account/user/login",
+        data={"username": USERNAME, "password": PASSWORD, "submit": "login", "next": ""},
+        verify=False,
+        timeout=30,
+    )
+    r.raise_for_status()
+
+
+def download_ship_to(session: requests.Session, customer_id: str) -> pd.DataFrame:
+    url = f"{BASE_URL}/report/excel/index.excel/type/ship.to"
+    payload = {
+        "customer_id": customer_id,
+        "status": "A",
+        "from_valid_date": "01/01/2025",
+        "submit": "พิมพ์",
+        "display_type": "multiple-day",
+        "report_type": "ship.to",
+    }
+    r = session.post(url, data=payload, verify=False, timeout=120)
+    r.raise_for_status()
+    df = pd.read_excel(io.BytesIO(r.content), sheet_name=0, dtype=str, skiprows=1)
+    df["customer_id"] = customer_id
+    return df
+
+
+if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(encoding="utf-8")
+
+    with requests.Session() as s:
+        login(s)
+        frames = [download_ship_to(s, cid) for cid in CUSTOMER_IDS]
+
+    shipto = pd.concat(frames, ignore_index=True)
+    os.makedirs("raw_data", exist_ok=True)
+    shipto.to_excel("raw_data/shipto.xlsx", index=False)
+    print(f"Saved {len(shipto)} ship.to rows to raw_data/shipto.xlsx")
