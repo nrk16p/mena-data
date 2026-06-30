@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
-import { Download, FileSpreadsheet, ChevronDown, ChevronUp, RefreshCw, Database, Search, X } from "lucide-react"
+import { useEffect, useState, useMemo, useRef, useCallback } from "react"
+import { Download, FileSpreadsheet, ChevronDown, ChevronUp, RefreshCw, Database, Search, X, Play, Loader2 } from "lucide-react"
 
 type RunInfo = {
   id: string
@@ -113,8 +113,11 @@ export default function PipelinePage({ type, title }: { type: string; title: str
   const [previewLoading, setPreviewLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<TabKey>("ticket")
   const [search, setSearch] = useState("")
+  const [pipelineRunning, setPipelineRunning] = useState(false)
+  const [runMsg, setRunMsg] = useState<{ text: string; ok: boolean } | null>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  async function fetchRuns() {
+  const fetchRuns = useCallback(async () => {
     try {
       setLoading(true)
       setError("")
@@ -127,7 +130,56 @@ export default function PipelinePage({ type, title }: { type: string; title: str
     } finally {
       setLoading(false)
     }
+  }, [type])
+
+  // Poll pipeline status while running
+  const pollStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/pipeline/${type}/run`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.running) {
+        setPipelineRunning(true)
+        pollRef.current = setTimeout(pollStatus, 8000)
+      } else {
+        setPipelineRunning(false)
+        if (data.last_run) {
+          setRunMsg({ text: "Pipeline finished — refreshing runs…", ok: true })
+          await fetchRuns()
+          setTimeout(() => setRunMsg(null), 4000)
+        }
+      }
+    } catch {
+      setPipelineRunning(false)
+    }
+  }, [type, fetchRuns])
+
+  async function triggerRun() {
+    setRunMsg(null)
+    try {
+      const res = await fetch(`/api/pipeline/${type}/run`, { method: "POST" })
+      const data = await res.json()
+      if (data.status === "started") {
+        setPipelineRunning(true)
+        setRunMsg({ text: "Pipeline started — this takes 5–15 min…", ok: true })
+        pollRef.current = setTimeout(pollStatus, 10000)
+      } else if (data.status === "already_running") {
+        setRunMsg({ text: "Pipeline already running…", ok: true })
+        setPipelineRunning(true)
+        pollRef.current = setTimeout(pollStatus, 10000)
+      } else if (data.error === "Pipeline runner not configured") {
+        setRunMsg({ text: "Run Now not configured (NCAC_API_URL missing)", ok: false })
+      } else {
+        setRunMsg({ text: data.error ?? "Unknown response", ok: false })
+      }
+    } catch (err: unknown) {
+      setRunMsg({ text: err instanceof Error ? err.message : "Failed to trigger pipeline", ok: false })
+    }
   }
+
+  useEffect(() => {
+    return () => { if (pollRef.current) clearTimeout(pollRef.current) }
+  }, [])
 
   async function togglePreview(run: RunInfo) {
     if (openId === run.id) {
@@ -156,7 +208,7 @@ export default function PipelinePage({ type, title }: { type: string; title: str
     window.location.href = `/api/pipeline/${type}/${encodeURIComponent(run.id)}?action=download`
   }
 
-  useEffect(() => { fetchRuns() }, [type])
+  useEffect(() => { fetchRuns() }, [type, fetchRuns])
 
   // Reset search when switching tabs
   function handleTabChange(tab: TabKey) {
@@ -179,15 +231,37 @@ export default function PipelinePage({ type, title }: { type: string; title: str
             Pipeline runs — updated daily at 7:00 AM
           </p>
         </div>
-        <button
-          onClick={fetchRuns}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/8 disabled:opacity-50 transition-colors"
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={triggerRun}
+            disabled={pipelineRunning}
+            className="flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 px-4 py-2 text-sm font-medium text-white transition-colors"
+          >
+            {pipelineRunning
+              ? <Loader2 size={14} className="animate-spin" />
+              : <Play size={14} />}
+            {pipelineRunning ? "Running…" : "Run Now"}
+          </button>
+          <button
+            onClick={fetchRuns}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/8 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {runMsg && (
+        <div className={`rounded-xl border p-3 text-sm ${
+          runMsg.ok
+            ? "border-blue-200 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+            : "border-red-200 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400"
+        }`}>
+          {runMsg.text}
+        </div>
+      )}
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-700 dark:text-red-400">
