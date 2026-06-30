@@ -228,7 +228,9 @@ export default function PipelinePage({ type, title }: { type: string; title: str
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">{title}</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Pipeline runs — updated daily at 7:00 AM
+            {runs[0]?.created_at
+              ? <>Last updated: <span className="font-medium text-gray-700 dark:text-gray-300">{formatDate(runs[0].created_at)}</span></>
+              : "Pipeline runs — updated daily at 02:00 AM"}
           </p>
         </div>
         <div className="flex items-center gap-2">
