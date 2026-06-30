@@ -36,12 +36,16 @@ export async function GET(
         const filename = (run.filename as string) ?? `${run.pipeline}_${run.run_date}.xlsx`
 
         if (action === "download") {
+          // Replace null/undefined with "" to avoid NaN in numeric cells
+          const clean = (r: Record<string, unknown>) =>
+            Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v ?? ""]))
+
           const wb = XLSX.utils.book_new()
-          const ws = XLSX.utils.json_to_sheet(rows)
+          const ws = XLSX.utils.json_to_sheet(rows.map(clean))
           XLSX.utils.book_append_sheet(wb, ws, "LDT")
 
           if (run.new_ship_to_rows && Array.isArray(run.new_ship_to_rows) && run.new_ship_to_rows.length > 0) {
-            const ws2 = XLSX.utils.json_to_sheet(run.new_ship_to_rows as Record<string, unknown>[])
+            const ws2 = XLSX.utils.json_to_sheet((run.new_ship_to_rows as Record<string, unknown>[]).map(clean))
             XLSX.utils.book_append_sheet(wb, ws2, "New Ship To")
           }
 
