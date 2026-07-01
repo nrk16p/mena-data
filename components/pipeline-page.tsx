@@ -113,6 +113,8 @@ export default function PipelinePage({ type, title }: { type: string; title: str
   const [previewLoading, setPreviewLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<TabKey>("ticket")
   const [search, setSearch] = useState("")
+  const [filterStart, setFilterStart] = useState("")
+  const [filterEnd, setFilterEnd] = useState("")
   const [pipelineRunning, setPipelineRunning] = useState(false)
   const [runMsg, setRunMsg] = useState<{ text: string; ok: boolean } | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -210,6 +212,17 @@ export default function PipelinePage({ type, title }: { type: string; title: str
 
   useEffect(() => { fetchRuns() }, [type, fetchRuns])
 
+  const filteredRuns = useMemo(() => {
+    if (!filterStart && !filterEnd) return runs
+    return runs.filter((run) => {
+      const dateStr = (run.run_date ?? run.created_at)?.slice(0, 10)
+      if (!dateStr) return true
+      if (filterStart && dateStr < filterStart) return false
+      if (filterEnd && dateStr > filterEnd) return false
+      return true
+    })
+  }, [runs, filterStart, filterEnd])
+
   // Reset search when switching tabs
   function handleTabChange(tab: TabKey) {
     setActiveTab(tab)
@@ -271,6 +284,33 @@ export default function PipelinePage({ type, title }: { type: string; title: str
         </div>
       )}
 
+      {/* Date range filter */}
+      <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-white/8 bg-white dark:bg-white/5 px-4 py-2.5">
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Date range</span>
+        <input
+          type="date"
+          value={filterStart}
+          onChange={(e) => setFilterStart(e.target.value)}
+          className="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition"
+        />
+        <span className="text-xs text-gray-400">to</span>
+        <input
+          type="date"
+          value={filterEnd}
+          onChange={(e) => setFilterEnd(e.target.value)}
+          className="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition"
+        />
+        {(filterStart || filterEnd) && (
+          <button
+            onClick={() => { setFilterStart(""); setFilterEnd("") }}
+            className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+          >
+            <X size={12} />
+            Clear
+          </button>
+        )}
+      </div>
+
       <div className="overflow-hidden rounded-2xl border border-gray-200 dark:border-white/8 bg-white dark:bg-[#0f1117] shadow-sm">
         {/* Table header */}
         <div className="grid grid-cols-[1fr_80px_80px_180px_120px] gap-4 border-b border-gray-100 dark:border-white/8 px-5 py-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
@@ -285,8 +325,11 @@ export default function PipelinePage({ type, title }: { type: string; title: str
         {!loading && runs.length === 0 && (
           <div className="px-5 py-10 text-center text-sm text-gray-400">No pipeline runs found.</div>
         )}
+        {!loading && runs.length > 0 && filteredRuns.length === 0 && (
+          <div className="px-5 py-10 text-center text-sm text-gray-400">No runs in this date range.</div>
+        )}
 
-        {runs.map((run) => (
+        {filteredRuns.map((run) => (
           <div key={run.id} className="border-b border-gray-50 dark:border-white/5 last:border-0">
             {/* Row */}
             <div className="grid grid-cols-[1fr_80px_80px_180px_120px] gap-4 items-center px-5 py-3 hover:bg-gray-50 dark:hover:bg-white/3 transition-colors">
