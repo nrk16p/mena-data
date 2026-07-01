@@ -49,7 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "LD Pipelines",
     items: [
-      { href: "/ld", label: "Asia LD", icon: FileOutput },
+      { href: "/ld", label: "Asia", icon: FileOutput },
       { href: "/cpac", label: "CPAC", icon: FileOutput },
       { href: "/scco", label: "SCCO", icon: FileOutput },
     ],
