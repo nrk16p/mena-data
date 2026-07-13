@@ -251,6 +251,25 @@ def fetch_ship_to(session: requests.Session) -> pd.DataFrame:
     return df
 
 
+SHIPTO_CACHE = BASE_DIR / ".shipto_cache.pkl"
+SHIPTO_TTL_HOURS = 12
+
+
+def load_shipto_cached(session: requests.Session) -> pd.DataFrame:
+    """Ship.to is date-independent master data (~8 min to download) — reuse a
+    recent copy so multi-day catch-up runs fetch it only once."""
+    if SHIPTO_CACHE.exists() and (time.time() - SHIPTO_CACHE.stat().st_mtime) < SHIPTO_TTL_HOURS * 3600:
+        df = pd.read_pickle(SHIPTO_CACHE)
+        log.info(f"Ship.to: {len(df)} rows (cache)")
+        return df
+    df = fetch_ship_to(session)
+    try:
+        df.to_pickle(SHIPTO_CACHE)
+    except Exception as e:
+        log.warning(f"Ship.to cache write failed: {e}")
+    return df
+
+
 # ── Step 6: Build LDT merged output ──────────────────────────────────────────
 
 def _convert_dptime(series: pd.Series) -> pd.Series:
@@ -659,7 +678,7 @@ if __name__ == "__main__":
         atms_login(session)
         df_vehicledaily = fetch_vehicle_daily(session, target_date_atms)
         df_vehiclemaster = fetch_vehiclemaster(session)
-        df_shipto = fetch_ship_to(session)
+        df_shipto = load_shipto_cached(session)
 
     # Build outputs in memory
     df_ldt = build_ldt(df_cpac, df_fleetlink, df_vehicledaily, df_vehiclemaster, df_shipto)

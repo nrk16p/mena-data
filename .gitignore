@@ -31,3 +31,4 @@ scripts/*/task_log.txt
 scripts/cpac/state.json
 scripts/cpac/logs/
 __pycache__/
+scripts/cpac/.shipto_cache.pkl
