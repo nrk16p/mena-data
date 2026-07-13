@@ -33,12 +33,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 def _fmt_date(val):
     if pd.isna(val): return ""
-    dt = pd.to_datetime(val, errors="coerce")
+    dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
     return "" if pd.isna(dt) else dt.strftime("%d/%m/%Y")
 
 def _fmt_datetime(val):
     if pd.isna(val): return ""
-    dt = pd.to_datetime(val, errors="coerce")
+    dt = pd.to_datetime(val, dayfirst=True, errors="coerce")
     if pd.isna(dt): return str(val)
     return dt.strftime("%d/%m/%Y") if (dt.hour == 0 and dt.minute == 0) else dt.strftime("%d/%m/%Y %H:%M")
 
