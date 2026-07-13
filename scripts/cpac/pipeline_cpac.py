@@ -263,6 +263,19 @@ def _convert_dptime(series: pd.Series) -> pd.Series:
     return converted.dt.tz_convert("Asia/Bangkok")
 
 
+def _drop_cancelled(cpac: pd.DataFrame, fleetlink: pd.DataFrame) -> pd.DataFrame:
+    """Drop tickets fleetlink marks as สถานะตั๋ว = ยกเลิก."""
+    if fleetlink.empty or "สถานะตั๋ว" not in fleetlink.columns or "หมายเลข DP" not in fleetlink.columns:
+        return cpac
+    cancelled = set(fleetlink.loc[fleetlink["สถานะตั๋ว"] == "ยกเลิก", "หมายเลข DP"].astype(str))
+    if not cancelled:
+        return cpac
+    before = len(cpac)
+    cpac = cpac[~cpac["dpNo"].astype(str).isin(cancelled)]
+    log.info(f"Cancelled tickets dropped: {before - len(cpac)}")
+    return cpac
+
+
 def build_ldt(
     cpac: pd.DataFrame,
     fleetlink: pd.DataFrame,
@@ -272,6 +285,7 @@ def build_ldt(
 ) -> pd.DataFrame:
     cpac = cpac[["plantNo", "dpNo", "dpDate", "dpTime", "carNo", "driverName",
                   "siteCode", "siteName", "quantity", "distanceCode"]].copy()
+    cpac = _drop_cancelled(cpac, fleetlink)
 
     for col in ["dpDate", "dpTime"]:
         if col in cpac.columns:
@@ -316,9 +330,15 @@ def build_ldt(
     if not vehicledaily.empty:
         vehicledaily["เบอร์รถ"] = vehicledaily["เบอร์รถ"].astype(str)
 
-    merged = cpac.merge(fl, how="inner", left_on="dpNo", right_on="หมายเลข DP")
+    # Left joins: a ticket missing from fleetlink / vehicle daily / vehicle master
+    # keeps its row with blanks instead of silently disappearing
+    fl = fl.drop_duplicates(subset=["หมายเลข DP"], keep="first")
+    merged = cpac.merge(fl, how="left", left_on="dpNo", right_on="หมายเลข DP")
+    log.info(f"Fleetlink join: {int(merged['หมายเลข DP'].notna().sum())}/{len(merged)} matched")
     if not vehicledaily.empty:
-        merged = merged.merge(vehicledaily, how="inner", left_on="carNo", right_on="เบอร์รถ")
+        vehicledaily = vehicledaily.drop_duplicates(subset=["เบอร์รถ"], keep="last")
+        merged = merged.merge(vehicledaily, how="left", left_on="carNo", right_on="เบอร์รถ")
+        log.info(f"Vehicle daily join: {int(merged['เบอร์รถ'].notna().sum())}/{len(merged)} matched")
 
     if "คนขับรถ" in merged.columns:
         merged["ประเภทรถร่วม"] = ""
@@ -330,19 +350,22 @@ def build_ldt(
     merged["รหัส พจส 1"] = merged.get("รหัส", "")
     merged["รหัส พจส 2"] = ""
     if "ทะเบียน" in merged.columns:
-        merged["ทะเบียนหัว"] = "สบ." + merged["ทะเบียน"].astype(str)
+        merged["ทะเบียนหัว"] = np.where(
+            merged["ทะเบียน"].notna(), "สบ." + merged["ทะเบียน"].astype(str), ""
+        )
     else:
         merged["ทะเบียนหัว"] = ""
 
     if not vehiclemaster.empty:
-        vehiclemaster = vehiclemaster.copy()
-        merged = merged.merge(vehiclemaster, how="inner", left_on="carNo", right_on="เลขรถ")
+        vehiclemaster = vehiclemaster.copy().drop_duplicates(subset=["เลขรถ"], keep="last")
+        merged = merged.merge(vehiclemaster, how="left", left_on="carNo", right_on="เลขรถ")
+        log.info(f"Vehicle master join: {int(merged['เลขรถ'].notna().sum())}/{len(merged)} matched")
         if "ประเภทยานพาหนะ" in merged.columns:
             merged["เส้นทาง"] = merged["ประเภทยานพาหนะ"].apply(
-                lambda x: "CPAC L" if x == "Mixer 10 ล้อ" else "6 ล้อ"
+                lambda x: "" if pd.isna(x) else ("CPAC L" if x == "Mixer 10 ล้อ" else "6 ล้อ")
             )
             merged["บริการ"] = merged["เส้นทาง"].apply(
-                lambda x: "M026" if x == "6 ล้อ" else "M025 "
+                lambda x: "" if x == "" else ("M026" if x == "6 ล้อ" else "M025 ")
             )
         else:
             merged["เส้นทาง"] = ""
@@ -401,6 +424,8 @@ def build_ldt(
         "วันเวลาอ้างอิง 1", "วันเวลาอ้างอิง 2", "วันเวลาอ้างอิง 3", "วันเวลาอ้างอิง 4",
         "วันเวลาลงสินค้า", "วันเวลาปิด LDT", "วิ่งแทนรถทะเบียน",
     ]
+    merged = merged[~merged["LDT"].astype(str).duplicated(keep="last")]
+
     for col in selected_cols:
         if col not in merged.columns:
             merged[col] = ""
@@ -420,6 +445,7 @@ def build_new_shippo(
 ) -> pd.DataFrame:
     cpac = cpac[["plantNo", "dpNo", "dpDate", "dpTime", "carNo", "driverName",
                   "siteCode", "siteName", "quantity", "distanceCode"]].copy()
+    cpac = _drop_cancelled(cpac, fleetlink)
 
     for col in ["dpDate", "dpTime"]:
         if col in cpac.columns:
@@ -448,24 +474,29 @@ def build_new_shippo(
     if not vehicledaily.empty:
         vehicledaily["เบอร์รถ"] = vehicledaily["เบอร์รถ"].astype(str)
 
-    merged = cpac.merge(fl, how="inner", left_on="dpNo", right_on="หมายเลข DP")
+    fl = fl.drop_duplicates(subset=["หมายเลข DP"], keep="first")
+    merged = cpac.merge(fl, how="left", left_on="dpNo", right_on="หมายเลข DP")
     if not vehicledaily.empty:
-        merged = merged.merge(vehicledaily, how="inner", left_on="carNo", right_on="เบอร์รถ")
+        vehicledaily = vehicledaily.drop_duplicates(subset=["เบอร์รถ"], keep="last")
+        merged = merged.merge(vehicledaily, how="left", left_on="carNo", right_on="เบอร์รถ")
     if "คนขับรถ" in merged.columns:
         merged["ประเภทรถร่วม"] = ""
         merged.loc[merged["คนขับรถ"] == "พจส", "ประเภทรถร่วม"] = "OT-MT01"
         merged.loc[merged["คนขับรถ"] == "พจร", "ประเภทรถร่วม"] = "OT-MT02"
     if "ทะเบียน" in merged.columns:
-        merged["ทะเบียนหัว"] = "สบ." + merged["ทะเบียน"].astype(str)
+        merged["ทะเบียนหัว"] = np.where(
+            merged["ทะเบียน"].notna(), "สบ." + merged["ทะเบียน"].astype(str), ""
+        )
 
     if not vehiclemaster.empty:
-        merged = merged.merge(vehiclemaster, how="inner", left_on="carNo", right_on="เลขรถ")
+        vehiclemaster = vehiclemaster.copy().drop_duplicates(subset=["เลขรถ"], keep="last")
+        merged = merged.merge(vehiclemaster, how="left", left_on="carNo", right_on="เลขรถ")
         if "ประเภทยานพาหนะ" in merged.columns:
             merged["เส้นทาง"] = merged["ประเภทยานพาหนะ"].apply(
-                lambda x: "CPAC L" if x == "Mixer 10 ล้อ" else "6 ล้อ"
+                lambda x: "" if pd.isna(x) else ("CPAC L" if x == "Mixer 10 ล้อ" else "6 ล้อ")
             )
             merged["บริการ"] = merged["เส้นทาง"].apply(
-                lambda x: "M026" if x == "6 ล้อ" else "M025 "
+                lambda x: "" if x == "" else ("M026" if x == "6 ล้อ" else "M025 ")
             )
 
     merged["Ship To"] = merged["Ship To"].astype(str)
@@ -598,12 +629,17 @@ def write_to_mongo(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    yesterday = datetime.today() - timedelta(days=1)
-    target_date_th = yesterday.strftime("%d-%m-%Y")   # for CPAC API
-    target_date_atms = yesterday.strftime("%d/%m/%Y") # for ATMS forms
-    target_date_ymd = yesterday.strftime("%Y-%m-%d")  # for fleetlink API
-    run_date = yesterday.strftime("%Y-%m-%d")
-    filename = f"LDTCPAC_{yesterday.strftime('%d-%m-%y')}.xlsx"
+    import argparse
+    parser = argparse.ArgumentParser(description="CPAC LDT pipeline")
+    parser.add_argument("--date", help="target data date YYYY-MM-DD (default: yesterday)")
+    args = parser.parse_args()
+    target = (datetime.strptime(args.date, "%Y-%m-%d") if args.date
+              else datetime.today() - timedelta(days=1))
+    target_date_th = target.strftime("%d-%m-%Y")   # for CPAC API
+    target_date_atms = target.strftime("%d/%m/%Y") # for ATMS forms
+    target_date_ymd = target.strftime("%Y-%m-%d")  # for fleetlink API
+    run_date = target.strftime("%Y-%m-%d")
+    filename = f"LDTCPAC_{target.strftime('%d-%m-%y')}.xlsx"
 
     log.info(f"=== CPAC pipeline starting for {run_date} ===")
 
