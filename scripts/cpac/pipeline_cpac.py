@@ -236,13 +236,24 @@ def fetch_vehiclemaster(session: requests.Session) -> pd.DataFrame:
 def fetch_ship_to(session: requests.Session) -> pd.DataFrame:
     frames = []
     for cid in CUSTOMER_IDS:
-        r = session.post(
-            f"{BASE_ATMS}/report/excel/index.excel/type/ship.to",
-            data={"customer_id": cid, "status": "A", "from_valid_date": "01/01/2025",
-                  "submit": "พิมพ์", "display_type": "multiple-day", "report_type": "ship.to"},
-            verify=False, timeout=600,
-        )
-        r.raise_for_status()
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                r = session.post(
+                    f"{BASE_ATMS}/report/excel/index.excel/type/ship.to",
+                    data={"customer_id": cid, "status": "A", "from_valid_date": "01/01/2025",
+                          "submit": "พิมพ์", "display_type": "multiple-day", "report_type": "ship.to"},
+                    verify=False, timeout=900,
+                )
+                r.raise_for_status()
+                break
+            except requests.RequestException as e:
+                last_err = e
+                log.warning(f"Ship.to customer {cid} attempt {attempt} failed: {e}")
+                if attempt < 3:
+                    time.sleep(30 * attempt)
+        else:
+            raise RuntimeError(f"Ship.to customer {cid} failed after 3 attempts: {last_err}")
         df = pd.read_excel(io.BytesIO(r.content), sheet_name=0, dtype=str, skiprows=1)
         df["customer_id"] = cid
         frames.append(df)
