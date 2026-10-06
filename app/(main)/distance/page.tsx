@@ -14,6 +14,7 @@ import {
   MapPin,
   Copy,
   Check,
+  Hourglass,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -34,13 +35,18 @@ type SlopeResult = {
   uphill_km: number
   steep_uphill_km: number
   total_distance_km: number
+  elevation_source: string | null
 }
 
-type LegResult = { ok: true; data: SlopeResult } | { ok: false; error: string }
+type LegResult =
+  | { ok: true; data: SlopeResult; cachedAt: string | null }
+  | { ok: false; error: string; busy?: boolean; retryAfter?: number }
 
 type LegState =
+  | { status: "queued" }
   | { status: "loading" }
-  | { status: "ok"; data: SlopeResult }
+  | { status: "waiting"; seconds: number }
+  | { status: "ok"; data: SlopeResult; cachedAt: string | null }
   | { status: "error"; error: string }
 
 type Calc = { from: Loc; to: Loc; go: LegState; back: LegState }
@@ -50,6 +56,7 @@ type Leg = "go" | "back"
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_OPTIONS = 50
+const MAX_AUTO_WAIT_S = 30
 
 const TERRAIN = [
   { key: "flat_km", label: "ทางเรียบ", color: "bg-emerald-500" },
@@ -115,9 +122,17 @@ function toLocs(docs: Record<string, unknown>[]): Loc[] {
   return out
 }
 
-function legState(r: LegResult | null | undefined): LegState {
-  if (!r) return { status: "error", error: "No response" }
-  return r.ok ? { status: "ok", data: r.data } : { status: "error", error: r.error }
+function isPending(s: LegState): boolean {
+  return s.status === "queued" || s.status === "loading" || s.status === "waiting"
+}
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+function fmtDate(val: string): string {
+  const d = new Date(val)
+  return isNaN(d.getTime()) ? val : d.toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })
 }
 
 function mapsUrl(from: Loc, to: Loc): string {
@@ -296,6 +311,7 @@ function LegCard({
   to,
   state,
   onRetry,
+  retryDisabled,
 }: {
   title: string
   load: string
@@ -303,6 +319,7 @@ function LegCard({
   to: Loc
   state: LegState
   onRetry: () => void
+  retryDisabled: boolean
 }) {
   const straightKm = haversine(from.lat, from.lng, to.lat, to.lng) / 1000
 
@@ -332,10 +349,24 @@ function LegCard({
         </a>
       </div>
 
+      {state.status === "queued" && (
+        <div className="flex items-center gap-2 py-8 justify-center text-[13px] text-gray-400">
+          <Hourglass size={15} />
+          Queued — starts after ขาไป
+        </div>
+      )}
+
       {state.status === "loading" && (
         <div className="flex items-center gap-2 py-8 justify-center text-[13px] text-gray-400">
           <Loader2 size={16} className="animate-spin" />
           Calculating route…
+        </div>
+      )}
+
+      {state.status === "waiting" && (
+        <div className="flex items-center gap-2 py-8 justify-center text-[13px] text-amber-600 dark:text-amber-400">
+          <Hourglass size={15} />
+          Map services are busy — retrying in {state.seconds}s…
         </div>
       )}
 
@@ -345,7 +376,8 @@ function LegCard({
           <span className="flex-1">{state.error}</span>
           <button
             onClick={onRetry}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-white/10 border border-red-200 dark:border-red-500/30 hover:bg-red-50 transition"
+            disabled={retryDisabled}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-white/10 border border-red-200 dark:border-red-500/30 hover:bg-red-50 disabled:opacity-50 transition"
           >
             <RotateCw size={12} />
             Retry
@@ -382,6 +414,9 @@ function LegCard({
             <p className="text-[11px] text-gray-400">
               Straight line {fmtKm(straightKm)} km
               {straightKm > 0 && ` · road ÷ straight = ${(d.total_distance_km / straightKm).toFixed(2)}×`}
+              <br />
+              {state.cachedAt ? `Saved result · ${fmtDate(state.cachedAt)}` : "Just calculated"}
+              {d.elevation_source && ` · elevation: ${d.elevation_source}`}
             </p>
           </>
         )
@@ -398,9 +433,18 @@ function atmsValue(f: (typeof ATMS_FIELDS)[number], calc: Calc): number | null {
   return st.status === "ok" ? st.data[f.key] : null
 }
 
-function AtmsPanel({ calc }: { calc: Calc }) {
+function AtmsPanel({
+  calc,
+  busy,
+  onRecalculate,
+}: {
+  calc: Calc
+  busy: boolean
+  onRecalculate: () => void
+}) {
   const [copied, setCopied] = useState(false)
   const ready = calc.go.status === "ok" && calc.back.status === "ok"
+  const anyCached = [calc.go, calc.back].some((s) => s.status === "ok" && s.cachedAt)
 
   async function copy() {
     const text = ATMS_FIELDS.map((f) => `${f.label} : ${(atmsValue(f, calc) ?? 0).toFixed(2)}`).join("\n")
@@ -420,14 +464,27 @@ function AtmsPanel({ calc }: { calc: Calc }) {
           <p className="text-[15px] font-bold text-gray-900 dark:text-white">ATMS Ship To</p>
           <p className="text-[11px] text-gray-400">…หนัก = ขาไป (From→To) · ที่เหลือ = ขากลับ (To→From)</p>
         </div>
-        <button
-          onClick={copy}
-          disabled={!ready}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-[12px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/8 disabled:opacity-40 transition"
-        >
-          {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
-          {copied ? "Copied" : "Copy"}
-        </button>
+        <div className="flex items-center gap-2">
+          {anyCached && (
+            <button
+              onClick={onRecalculate}
+              disabled={busy}
+              title="Ignore the saved result and call the map services again"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-[12px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/8 disabled:opacity-40 transition"
+            >
+              <RotateCw size={13} />
+              Recalculate
+            </button>
+          )}
+          <button
+            onClick={copy}
+            disabled={!ready}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-white/10 text-[12px] font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/8 disabled:opacity-40 transition"
+          >
+            {copied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
       </div>
 
       <div className="divide-y divide-gray-100 dark:divide-white/6">
@@ -449,7 +506,7 @@ function AtmsPanel({ calc }: { calc: Calc }) {
               >
                 {v !== null ? (
                   v.toFixed(2)
-                ) : st?.status === "loading" ? (
+                ) : st && isPending(st) ? (
                   <Loader2 size={13} className="inline animate-spin text-gray-400" />
                 ) : (
                   "—"
@@ -489,51 +546,67 @@ export default function DistancePage() {
       .finally(() => setLoadingLocs(false))
   }, [])
 
-  const busy = calc !== null && (calc.go.status === "loading" || calc.back.status === "loading")
+  const busy = calc !== null && (isPending(calc.go) || isPending(calc.back))
   const samePoint = from !== null && to !== null && from.id === to.id
   const canCalc = from !== null && to !== null && !samePoint && !busy
 
-  async function request(pair: { from: Loc; to: Loc }, only?: Leg) {
+  async function request(o: Loc, d: Loc, refresh: boolean): Promise<LegResult> {
     try {
       const res = await fetch("/api/distance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: { lat: pair.from.lat, lng: pair.from.lng },
-          to: { lat: pair.to.lat, lng: pair.to.lng },
-          only,
+          from: { lat: o.lat, lng: o.lng },
+          to: { lat: d.lat, lng: d.lng },
+          refresh,
         }),
       })
       const json = await res.json().catch(() => null)
-      if (!res.ok || !json) {
-        const error = json?.error || `Request failed (${res.status})`
-        return { go: { ok: false, error }, back: { ok: false, error } } as Record<Leg, LegResult>
-      }
-      return json as Record<Leg, LegResult | null>
+      if (!res.ok || !json) return { ok: false, error: json?.error || `Request failed (${res.status})` }
+      return json as LegResult
     } catch {
-      const error = "Network error"
-      return { go: { ok: false, error }, back: { ok: false, error } } as Record<Leg, LegResult>
+      return { ok: false, error: "Network error" }
     }
   }
 
-  async function calculate() {
-    if (!from || !to || !canCalc) return
-    const id = ++runId.current
-    const pair = { from, to }
-    setCalc({ ...pair, go: { status: "loading" }, back: { status: "loading" } })
-    const r = await request(pair)
-    if (runId.current !== id) return
-    setCalc({ ...pair, go: legState(r.go), back: legState(r.back) })
+  // One direction; if the map services are busy, count down once and retry automatically.
+  async function runLeg(id: number, pair: { from: Loc; to: Loc }, leg: Leg, refresh: boolean) {
+    const set = (st: LegState) => {
+      if (runId.current === id) setCalc((c) => (c ? { ...c, [leg]: st } : c))
+    }
+    const [o, d] = leg === "go" ? [pair.from, pair.to] : [pair.to, pair.from]
+    for (let attempt = 0; ; attempt++) {
+      set({ status: "loading" })
+      const r = await request(o, d, refresh)
+      if (runId.current !== id) return
+      if (r.ok) return set({ status: "ok", data: r.data, cachedAt: r.cachedAt })
+      if (!r.busy || attempt >= 1) return set({ status: "error", error: r.error })
+      for (let sec = Math.min(r.retryAfter ?? 15, MAX_AUTO_WAIT_S); sec > 0; sec--) {
+        set({ status: "waiting", seconds: sec })
+        await sleep(1000)
+        if (runId.current !== id) return
+      }
+    }
   }
 
-  async function retry(leg: Leg) {
-    if (!calc) return
-    const id = runId.current
-    const pair = { from: calc.from, to: calc.to }
-    setCalc((c) => (c ? { ...c, [leg]: { status: "loading" } } : c))
-    const r = await request(pair, leg)
-    if (runId.current !== id) return
-    setCalc((c) => (c ? { ...c, [leg]: legState(r[leg]) } : c))
+  // ขาไป then ขากลับ, never both at once: the free services behind slope-api rate-limit hard.
+  async function run(pair: { from: Loc; to: Loc }, refresh: boolean) {
+    const id = ++runId.current
+    setCalc({ ...pair, go: { status: "loading" }, back: { status: "queued" } })
+    await runLeg(id, pair, "go", refresh)
+    await runLeg(id, pair, "back", refresh)
+  }
+
+  function calculate() {
+    if (from && to && canCalc) run({ from, to }, false)
+  }
+
+  function recalculate() {
+    if (calc && !busy) run({ from: calc.from, to: calc.to }, true)
+  }
+
+  function retry(leg: Leg) {
+    if (calc && !busy) runLeg(runId.current, { from: calc.from, to: calc.to }, leg, false)
   }
 
   function swap() {
@@ -608,7 +681,7 @@ export default function DistancePage() {
                 </span>
               )}
               <span className="ml-auto text-[11px] text-gray-400">
-                Calculates both directions · takes a few seconds
+                ขาไป then ขากลับ, one at a time · saved routes load instantly
               </span>
             </div>
           </>
@@ -618,7 +691,7 @@ export default function DistancePage() {
       {/* Results */}
       {calc && (
         <div className="grid gap-4 lg:grid-cols-2 items-start">
-          <AtmsPanel calc={calc} />
+          <AtmsPanel calc={calc} busy={busy} onRecalculate={recalculate} />
           <div className="space-y-4">
             <LegCard
               title="ขาไป"
@@ -627,6 +700,7 @@ export default function DistancePage() {
               to={calc.to}
               state={calc.go}
               onRetry={() => retry("go")}
+              retryDisabled={busy}
             />
             <LegCard
               title="ขากลับ"
@@ -635,6 +709,7 @@ export default function DistancePage() {
               to={calc.from}
               state={calc.back}
               onRetry={() => retry("back")}
+              retryDisabled={busy}
             />
           </div>
         </div>
