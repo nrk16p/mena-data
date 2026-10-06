@@ -14,6 +14,7 @@ import {
   LogOut,
   Route,
   FileOutput,
+  Ruler,
 } from "lucide-react"
 import { ThemeToggle } from "./theme-toggle"
 
@@ -52,6 +53,12 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/ld", label: "Asia", icon: FileOutput },
       { href: "/cpac", label: "CPAC", icon: FileOutput },
       { href: "/scco", label: "SCCO", icon: FileOutput },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { href: "/distance", label: "Cal Distance", icon: Ruler },
     ],
   },
 ]
